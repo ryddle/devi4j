@@ -7,10 +7,12 @@ public class Project {
     private String name;
     private String projectFilePath;
     private List<String> jarPaths;
+    private List<String> sourcePaths;
 
     public Project(String name) {
         this.name = name;
         this.jarPaths = new ArrayList<>();
+        this.sourcePaths = new ArrayList<>();
     }
 
     public String getName() {
@@ -45,5 +47,23 @@ public class Project {
 
     public void removeJarPath(String path) {
         jarPaths.remove(path);
+    }
+
+    public List<String> getSourcePaths() {
+        return sourcePaths;
+    }
+
+    public void setSourcePaths(List<String> sourcePaths) {
+        this.sourcePaths = sourcePaths;
+    }
+
+    public void addSourcePath(String path) {
+        if (!sourcePaths.contains(path)) {
+            sourcePaths.add(path);
+        }
+    }
+
+    public void removeSourcePath(String path) {
+        sourcePaths.remove(path);
     }
 }

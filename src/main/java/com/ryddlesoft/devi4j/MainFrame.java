@@ -10,12 +10,16 @@ import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
-import java.awt.*;
+import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.Font;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.List;
+import java.util.Optional;
 import java.util.prefs.Preferences;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -34,6 +38,10 @@ public class MainFrame extends JFrame {
     private JMenu recentProjectsMenu;
     private static final int MAX_RECENT_PROJECTS = 10;
 
+    private JTabbedPane rightTabbedPane;
+    private JTextArea metricsTextArea;
+    private CodeMetricsAnalyzer codeMetricsAnalyzer;
+
     public MainFrame() {
         this.projectManager = new ProjectManager();
         setTitle("DeVi4J Dependency Visualizer");
@@ -44,6 +52,7 @@ public class MainFrame extends JFrame {
     }
 
     public void initialize() {
+        this.codeMetricsAnalyzer = new CodeMetricsAnalyzer();
         setupMenuBar();
         setupToolBar();
         setupMainView();
@@ -116,8 +125,16 @@ public class MainFrame extends JFrame {
         JScrollPane treeScrollPane = new JScrollPane(fileTree);
 
         graphVisualizer = new GraphVisualizer();
+        metricsTextArea = new JTextArea();
+        metricsTextArea.setEditable(false);
+        metricsTextArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+        JScrollPane metricsScrollPane = new JScrollPane(metricsTextArea);
 
-        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, treeScrollPane, graphVisualizer);
+        rightTabbedPane = new JTabbedPane();
+        rightTabbedPane.addTab("Dependencies", graphVisualizer);
+        rightTabbedPane.addTab("Code Metrics", metricsScrollPane);
+
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, treeScrollPane, rightTabbedPane);
         splitPane.setDividerLocation(350);
 
         add(splitPane, BorderLayout.CENTER);
@@ -249,6 +266,7 @@ public class MainFrame extends JFrame {
 
     private void onTreeSelectionChanged(TreeSelectionEvent e) {
         updateGraphFromSelection();
+        updateMetricsFromSelection();
     }
 
     private void updateGraphFromSelection() {
@@ -283,7 +301,7 @@ public class MainFrame extends JFrame {
                 for (String pkgName : allAvailablePackages) {
                     if (pkgName.equals(selectedPackageName) || pkgName.startsWith(selectedPackageName + ".")) {
                         selectedPackages.add(pkgName);
-                    } 
+                    }
                 }
             }
         }
@@ -313,6 +331,7 @@ public class MainFrame extends JFrame {
         Graph graph = graphVisualizer.createStyledGraph("ClassGraph");
         Set<ClassInfo> selectedClasses = new HashSet<>();
 
+        // Helper function to get the correct simple name, especially for anonymous classes
         java.util.function.Function<ClassInfo, String> getCorrectSimpleName = ci -> {
             String fqcn = ci.getName();
             int lastDot = fqcn.lastIndexOf('.');
@@ -340,12 +359,14 @@ public class MainFrame extends JFrame {
 
         Map<String, ClassInfo> classMap = selectedClasses.stream().collect(Collectors.toMap(ClassInfo::getName, c -> c));
 
+        // Create nodes with correct names
         for(ClassInfo ci : selectedClasses) {
             String nodeName = getCorrectSimpleName.apply(ci);
             org.graphstream.graph.Node node = graph.addNode(nodeName);
             node.setAttribute("ui.label", nodeName);
         }
 
+        // Create edges with filtering
         for (ClassInfo origin : selectedClasses) {
             String originNodeName = getCorrectSimpleName.apply(origin);
 
@@ -353,15 +374,17 @@ public class MainFrame extends JFrame {
                 if (classMap.containsKey(target.getName())) {
                     String targetNodeName = getCorrectSimpleName.apply(target);
 
+                    // Skip self-references
                     if (originNodeName.equals(targetNodeName)) {
                         continue;
                     }
 
+                    // **** FIX: Filter out dependency from inner class to its outer class ****
                     int dollarIndex = originNodeName.lastIndexOf('$');
                     if (dollarIndex != -1) {
                         String outerClassName = originNodeName.substring(0, dollarIndex);
                         if (outerClassName.equals(targetNodeName)) {
-                            continue;
+                            continue; // Skip this dependency
                         }
                     }
 
@@ -372,6 +395,7 @@ public class MainFrame extends JFrame {
             }
         }
 
+        // Create a map for cycle detection using the correct simple names
         Map<String, Set<String>> classDependencies = new HashMap<>();
         for (ClassInfo origin : selectedClasses) {
             String originName = getCorrectSimpleName.apply(origin);
@@ -388,7 +412,69 @@ public class MainFrame extends JFrame {
         graphVisualizer.updateGraph(graph, cycles);
     }
 
-    private java.util.List<String> getRecentProjects() {
+    private void updateMetricsFromSelection() {
+        DefaultMutableTreeNode selectedNode = (DefaultMutableTreeNode) fileTree.getLastSelectedPathComponent();
+
+        if (selectedNode == null || !(selectedNode.getUserObject() instanceof ClassInfo)) {
+            metricsTextArea.setText("");
+            return;
+        }
+
+        ClassInfo classInfo = (ClassInfo) selectedNode.getUserObject();
+        Optional<File> sourceFile = findSourceFileForClass(classInfo);
+
+        if (sourceFile.isPresent()) {
+            ClassMetrics metrics = codeMetricsAnalyzer.analyze(sourceFile.get().getAbsolutePath());
+            if (metrics != null) {
+                metricsTextArea.setText(formatMetrics(metrics));
+                metricsTextArea.setCaretPosition(0);
+                //rightTabbedPane.setSelectedIndex(1); // Switch to metrics tab
+            } else {
+                metricsTextArea.setText("Could not analyze file: ".concat(sourceFile.get().getName()));
+            }
+        } else {
+            metricsTextArea.setText("Source file not found for class: ".concat(classInfo.getSimpleName()));
+        }
+    }
+
+    private Optional<File> findSourceFileForClass(ClassInfo classInfo) {
+        if (currentProject == null || currentProject.getSourcePaths() == null) {
+            return Optional.empty();
+        }
+
+        String relativePath = classInfo.getName().replace('.', File.separatorChar) + ".java";
+
+        for (String sourceRootPath : currentProject.getSourcePaths()) {
+            File sourceFile = new File(sourceRootPath, relativePath);
+            if (sourceFile.exists()) {
+                return Optional.of(sourceFile);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private String formatMetrics(ClassMetrics metrics) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Metrics for class: ").append(metrics.getFullyQualifiedName()).append("\n\n");
+        sb.append("----------------------------------------\n");
+        sb.append("METHODS\n");
+        sb.append("----------------------------------------\n");
+
+        if (metrics.getMethodMetrics() == null || metrics.getMethodMetrics().isEmpty()) {
+            sb.append("No methods found.\n");
+        } else {
+            for (MethodMetrics method : metrics.getMethodMetrics()) {
+                sb.append(String.format("Method: %s\n", method.getMethodName()));
+                sb.append(String.format("  - Cyclomatic Complexity: %d\n", method.getCyclomaticComplexity()));
+                sb.append(String.format("  - Lines of Code (Statements): %d\n", method.getLineCount()));
+                sb.append(String.format("  - Parameters: %d\n", method.getParameterCount()));
+                sb.append("\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    private List<String> getRecentProjects() {
         Preferences prefs = Preferences.userNodeForPackage(MainFrame.class);
         return IntStream.range(0, MAX_RECENT_PROJECTS)
                 .mapToObj(i -> prefs.get("recentProject" + i, null))
@@ -406,6 +492,7 @@ public class MainFrame extends JFrame {
         for (int i = 0; i < toSave.size(); i++) {
             prefs.put("recentProject" + i, toSave.get(i));
         }
+        // Clear out old entries
         for (int i = toSave.size(); i < MAX_RECENT_PROJECTS; i++) {
             prefs.remove("recentProject" + i);
         }
