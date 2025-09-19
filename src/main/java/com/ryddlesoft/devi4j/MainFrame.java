@@ -4,6 +4,10 @@ import io.github.classgraph.ClassInfo;
 import org.graphstream.graph.Graph;
 import org.graphstream.graph.implementations.SingleGraph;
 
+import com.formdev.flatlaf.FlatDarkLaf;
+import com.formdev.flatlaf.FlatLaf;
+import com.formdev.flatlaf.FlatLightLaf;
+
 import javax.swing.*;
 import javax.swing.event.TreeSelectionEvent;
 import javax.swing.tree.DefaultMutableTreeNode;
@@ -18,8 +22,6 @@ import java.awt.event.ActionListener;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
-import java.util.List;
-import java.util.Optional;
 import java.util.prefs.Preferences;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -58,6 +60,20 @@ public class MainFrame extends JFrame {
         setupMainView();
         setVisible(true);
     }
+
+    private void applyTheme(String theme) {
+        try {
+            if (theme.equals("light")) {
+                UIManager.setLookAndFeel(new FlatLightLaf());
+            } else if (theme.equals("dark")) {
+                UIManager.setLookAndFeel(new FlatDarkLaf());
+            }
+            // Apply the new theme to all components
+            FlatLaf.updateUI();
+        } catch (UnsupportedLookAndFeelException e) {
+            e.printStackTrace();
+        }
+    }   
 
     private void setupMenuBar() {
         JMenuBar menuBar = new JMenuBar();
@@ -106,6 +122,25 @@ public class MainFrame extends JFrame {
         modeGroup.add(packageModeButton);
         toolBar.add(classModeButton);
         toolBar.add(packageModeButton);
+
+        // Agregar un "glue" que empuja todo lo siguiente a la derecha
+        toolBar.add(Box.createHorizontalGlue());
+
+        JToggleButton themeSwitchButton = new JToggleButton("🌞");//🌙
+        themeSwitchButton.setSelected(false);
+        themeSwitchButton.addActionListener(e -> {
+            if (!themeSwitchButton.isSelected()) {
+                themeSwitchButton.setText("🌙");
+                applyTheme("light");
+            } else {
+                themeSwitchButton.setText("🌞");
+                applyTheme("dark");
+            }
+        });
+        toolBar.add(themeSwitchButton);
+
+        // Botones a la derecha
+        toolBar.add(themeSwitchButton);
 
         ActionListener modeListener = e -> {
             currentMode = VisualizationMode.valueOf(e.getActionCommand());
